@@ -1,0 +1,162 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Preyanshu GUpta"
+output: html_document
+---
+
+Practical Machine Learning Assignment
+========================================================
+Author: Preyanshu GUpta
+
+
+# Download Dataset
+
+```{r echo=FALSE}
+setInternet2(TRUE)
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+D <- fread(url)
+# Read the testing data into a data table.
+
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+DTest <- fread(url)
+
+
+```
+
+
+# Dataset Cleaning
+
+Belt, arm, dumbbell, and forearm variables that do not have any missing values in the test dataset will be predictor candidates.
+
+```{r echo=FALSE}
+isMissing <- sapply(DTest,function (x) any(is.na(x) | x == ""))
+isPredictor <- !isMissing & grepl("belt|[^(fore)]arm|dumbbell|forearm", names(isMissing))
+predCandidates <- names(isMissing)[isPredictor]
+
+```
+
+## SUbset the dataset for meaningful data only
+
+```{r echo=FALSE}
+
+
+varToInclude <- c("classe", predCandidates)
+D <- D[, varToInclude, with= FALSE]
+names(D)
+```
+
+## Make classe into a factor.
+```{r}
+
+
+D <- D[, classe := factor(D[, classe])]
+D[, .N, classe]
+```
+
+# Split the dataset into a 60% training and 40% probing dataset for Cross VAlidation
+
+```{r echo=FALSE}
+
+seed <- as.numeric(as.Date("2015-02-15"))
+set.seed(seed)
+inTrain <- createDataPartition(D$classe, p=0.6)
+DTrain <- D[inTrain[[1]]]
+DProbe <- D[-inTrain[[1]]]
+
+```
+
+##Preprocess the prediction variables by centering and scaling.
+```{r echo= FALSE}
+X <- DTrain[, predCandidates, with = FALSE]
+preProc <- preProcess(X)
+preProc
+
+```
+
+
+#Apply the centering and scaling to the probing dataset.
+```{r echo= FALSE}
+XCS <- predict(preProc, X)
+DTrainCS <- data.table(data.frame(classe = DTrain[, classe], XCS))
+
+
+```
+
+```{r echo= FALSE}
+X <- DProbe[, predCandidates, with = FALSE]
+XCS <- predict(preProc, X)
+DProbeCS <- data.table(data.frame(classe = DProbe[, classe], XCS))
+
+```
+
+# Train a prediction model
+
+```{r echo= FALSE}
+require(parallel)
+require(doParallel)
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
+ctrl <- trainControl(classProbs=TRUE,
+                     savePredictions=TRUE,
+                     allowParallel=TRUE)
+method <- "rf"
+system.time(trainingModel <- train( classe ~ ., data= DTrainCS, method=method))
+## Loading required package: randomForest
+
+stopCluster(cl)
+
+
+
+```
+
+
+
+```{r}
+hat <- predict(trainingModel, DTrainCS)
+confusionMatrix(hat, DTrain[, classe])
+```
+
+# Evaluate the model on the probing dataset
+```{r}
+hat <- predict(trainingModel, DProbeCS)
+confusionMatrix(hat, DProbeCS[, classe])
+```
+
+
+# Display the final model
+
+```{r}
+varImp(trainingModel)
+```
+
+```{r}
+trainingModel$finalModel
+
+```
+
+###The estimated error rate is less than 1%.
+
+### Save training model object for later.
+
+
+```{r}
+save(trainingModel, file = "trainingModel.RData")
+```
+
+#Predict on the test data
+
+```{r}
+load( file="trainingModel.RData")
+
+```
+
+#Get predictions and evaluate.
+
+```{r}
+DTestCS <- predict(preProc, DTest[, predCandidates, with=FALSE])
+hat <- predict(trainingModel, DTestCS)
+DTest <- cbind(hat , DTest)
+subset(DTest, select=names(DTest)[grep("belt|[^(fore)]arm|dumbbell|forearm", names(DTest), invert=TRUE)])
+```
+
